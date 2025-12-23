@@ -3,92 +3,140 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <meta name="theme-color" content="#061a24" />
+  <meta name="theme-color" content="#07131d" />
   <title>Snow Rider — Reto</title>
-  <link rel="stylesheet" href="./style.css" />
-</head>
-<body>
 
+  <!-- ✅ IMPORTANTE: rutas relativas (NO /style.css) -->
+  <link rel="stylesheet" href="./style.css?v=1" />
+
+  <!-- Fonts opcionales -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- ✅ Import map (Three.js) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <!-- PRELOADER -->
   <div class="preloader" id="preloader" aria-live="polite">
-    <img class="logo" src="./assets/logo.png" alt="Logo" onerror="this.style.display='none'">
-    <div class="barWrap">
-      <div class="barBg"><div class="barFill" id="barFill"></div></div>
+    <div class="preloaderCard">
+      <img class="logo" src="./assets/logo.png" alt="Logo" onerror="this.style.display='none'">
+      <div class="loadTitle">Cargando pista nevada…</div>
+
+      <div class="barBg">
+        <div class="barFill" id="barFill"></div>
+      </div>
       <div class="barText" id="barText">0%</div>
+
+      <div class="loadHint">Optimizado para móvil · Swipe o flechas</div>
     </div>
-    <div class="tip">Cargando pista nevada…</div>
   </div>
 
-  <div class="hudTop">
+  <!-- HUD -->
+  <div class="hudTop" id="hudTop">
     <div class="pill">Progreso: <b id="progressText">0%</b></div>
     <div class="pill">Intentos: <b id="triesText">3</b>/3</div>
     <div class="pill subtle">Mejor: <b id="bestText">0%</b></div>
+
     <button class="soundBtn" id="soundBtn" aria-label="Sonido">🔊</button>
   </div>
 
+  <!-- MOBILE ARROWS -->
   <div class="arrows" id="arrows">
     <button class="arrowBtn" id="leftBtn" aria-label="Izquierda">◀</button>
     <button class="arrowBtn" id="rightBtn" aria-label="Derecha">▶</button>
   </div>
 
+  <!-- GAME CANVAS HOLDER -->
+  <div class="gameWrap" id="gameWrap">
+    <!-- three.js renderer se inserta acá -->
+  </div>
+
+  <!-- START OVERLAY -->
   <div class="overlay" id="startOverlay" role="dialog" aria-modal="true">
-    <div class="card">
-      <h1>🏂 Snow Rider — Reto</h1>
-      <p class="sub">Llegá a la meta esquivando obstáculos. Tenés <b>3 intentos</b>.</p>
+    <div class="panel">
+      <div class="panelHeader">
+        <div class="badge">🏂 Reto</div>
+        <h1>Snow Rider — Nivel Nevado</h1>
+        <p class="sub">Evitá árboles y muñecos de nieve. Tenés <b>3 intentos</b> para llegar a la meta.</p>
+      </div>
+
+      <div class="rulesGrid">
+        <div class="rule"><span>📱</span><div><b>Móvil</b><br>Swipe o flechas</div></div>
+        <div class="rule"><span>⌨️</span><div><b>PC</b><br>← →</div></div>
+        <div class="rule"><span>🏁</span><div><b>Meta</b><br>BONO <b>200%</b></div></div>
+        <div class="rule"><span>🎁</span><div><b>Si fallás 3</b><br>Consuelo <b>100%</b></div></div>
+      </div>
+
       <div class="ctaRow">
-        <button class="primary" id="playBtn">Jugar</button>
-        <button class="secondary" id="howBtn">Cómo jugar</button>
+        <button class="btn primary" id="playBtn">Jugar</button>
+        <button class="btn ghost" id="howBtn">Cómo jugar</button>
       </div>
-      <div class="fine">
-        <div>📱 Móvil: flechas o swipe</div>
-        <div>⌨️ PC: ← →</div>
-        <div>🏁 Meta: premio <b>200%</b> (si no, consuelo <b>100%</b>)</div>
-      </div>
+
       <div class="warn" id="triesWarn" style="display:none;">
-        ⚠️ Ya gastaste tus 3 intentos. Premio consuelo disponible.
+        ⚠️ Ya usaste los 3 intentos. Premio consuelo disponible.
       </div>
+
+      <div class="miniNote">Tip: el trineo va solo. Vos solo cambiás de carril.</div>
     </div>
   </div>
 
+  <!-- HOW TO OVERLAY -->
   <div class="overlay hidden" id="howOverlay" role="dialog" aria-modal="true">
-    <div class="card">
+    <div class="panel">
       <h2>Cómo jugar</h2>
       <ul class="list">
-        <li>El trineo avanza solo.</li>
-        <li>Movete entre <b>3 carriles</b>.</li>
+        <li>El trineo avanza automáticamente.</li>
+        <li>Tenés <b>3 carriles</b>. Cambiás de carril con <b>← →</b>, botones o swipe.</li>
         <li>Si chocás, perdés un intento.</li>
         <li>Si llegás a la meta: <b>BONO 200%</b>.</li>
-        <li>Si fallás los 3: <b>BONO 100%</b>.</li>
+        <li>Si fallás los 3 intentos: <b>BONO 100%</b>.</li>
       </ul>
       <div class="ctaRow">
-        <button class="primary" id="backBtn">Volver</button>
+        <button class="btn primary" id="backBtn">Volver</button>
       </div>
     </div>
   </div>
 
-  <div class="overlay hidden" id="resultOverlay" role="dialog" aria-modal="true">
-    <div class="card prize">
-      <div class="shine"></div>
-      <h2 id="resultTitle">🎁 Resultado</h2>
-      <p class="sub" id="resultText">Bono del 200%</p>
-      <div class="ctaRow">
-        <button class="primary" id="claimBtn">Reclamar</button>
-        <button class="secondary" id="closeBtn">Cerrar</button>
-      </div>
-      <div class="fine" id="resultHint">Mostrale este resultado a tu asesor para acreditarlo.</div>
-    </div>
-  </div>
-
+  <!-- FAIL OVERLAY -->
   <div class="overlay hidden" id="failOverlay" role="dialog" aria-modal="true">
-    <div class="card">
-      <h2>💥 Choque</h2>
-      <p class="sub">Te quedan <b id="triesLeftText">2</b> intentos.</p>
+    <div class="panel">
+      <div class="badge danger">💥 Choque</div>
+      <h2>Te quedan <b id="triesLeftText">2</b> intentos</h2>
+      <p class="sub">Reintentá y llegá a la meta.</p>
       <div class="ctaRow">
-        <button class="primary" id="retryBtn">Reintentar</button>
-        <button class="secondary" id="menuBtn">Menú</button>
+        <button class="btn primary" id="retryBtn">Reintentar</button>
+        <button class="btn ghost" id="menuBtn">Menú</button>
       </div>
     </div>
   </div>
 
-  <script type="module" src="./main.js"></script>
+  <!-- RESULT OVERLAY -->
+  <div class="overlay hidden" id="resultOverlay" role="dialog" aria-modal="true">
+    <div class="panel prize">
+      <div class="prizeGlow"></div>
+      <div class="badge win" id="resultBadge">🎁 Resultado</div>
+      <h2 id="resultTitle">¡Ganaste!</h2>
+      <p class="sub" id="resultText">Bono del 200%</p>
+
+      <div class="ctaRow">
+        <button class="btn primary" id="claimBtn">Reclamar</button>
+        <button class="btn ghost" id="closeBtn">Cerrar</button>
+      </div>
+
+      <div class="miniNote">Mostrale este resultado a tu asesor para acreditarlo.</div>
+    </div>
+  </div>
+
+  <!-- ✅ IMPORTANTE: script relativo -->
+  <script type="module" src="./main.js?v=1"></script>
 </body>
 </html>
