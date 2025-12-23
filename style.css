@@ -1,218 +1,718 @@
-:root{
-  --bg1:#061a24;
-  --bg2:#0b2c3b;
-  --gold:#ffd700;
-  --white:#fff;
-  --muted:rgba(255,255,255,.78);
-  --card:rgba(10,18,26,.84);
-  --stroke:rgba(255,255,255,.14);
-  --shadow: 0 20px 60px rgba(0,0,0,.55);
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+// =========================
+// Storage / casino rules
+// =========================
+const STORAGE = {
+  TRIES_LEFT: "sr_level_triesLeft",   // number
+  BEST_PROGRESS: "sr_level_bestPct",  // number 0..100
+  RESULT: "sr_level_lastResult",      // "200" | "100"
+};
+
+const MAX_TRIES = 3;
+const PRIZE_WIN = "Bono del 200% ✅ (Meta alcanzada)";
+const PRIZE_LOSE = "Bono del 100% 🎁 (Premio consuelo)";
+
+// =========================
+// UI
+// =========================
+const el = {
+  preloader: document.getElementById("preloader"),
+  barFill: document.getElementById("barFill"),
+  barText: document.getElementById("barText"),
+
+  progressText: document.getElementById("progressText"),
+  triesText: document.getElementById("triesText"),
+  bestText: document.getElementById("bestText"),
+
+  soundBtn: document.getElementById("soundBtn"),
+
+  arrows: document.getElementById("arrows"),
+  leftBtn: document.getElementById("leftBtn"),
+  rightBtn: document.getElementById("rightBtn"),
+
+  startOverlay: document.getElementById("startOverlay"),
+  playBtn: document.getElementById("playBtn"),
+  howBtn: document.getElementById("howBtn"),
+  triesWarn: document.getElementById("triesWarn"),
+
+  howOverlay: document.getElementById("howOverlay"),
+  backBtn: document.getElementById("backBtn"),
+
+  failOverlay: document.getElementById("failOverlay"),
+  triesLeftText: document.getElementById("triesLeftText"),
+  retryBtn: document.getElementById("retryBtn"),
+  menuBtn: document.getElementById("menuBtn"),
+
+  resultOverlay: document.getElementById("resultOverlay"),
+  resultTitle: document.getElementById("resultTitle"),
+  resultText: document.getElementById("resultText"),
+  claimBtn: document.getElementById("claimBtn"),
+  closeBtn: document.getElementById("closeBtn"),
+};
+
+let soundEnabled = true;
+el.soundBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  el.soundBtn.textContent = soundEnabled ? "🔊" : "🔇";
+  el.soundBtn.classList.toggle("muted", !soundEnabled);
+});
+
+// =========================
+// Helpers
+// =========================
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function getTriesLeft() {
+  const v = localStorage.getItem(STORAGE.TRIES_LEFT);
+  if (v === null) return MAX_TRIES;
+  return clamp(Number(v), 0, MAX_TRIES);
+}
+function setTriesLeft(v) {
+  localStorage.setItem(STORAGE.TRIES_LEFT, String(clamp(v, 0, MAX_TRIES)));
+}
+function getBestPct() {
+  return clamp(Number(localStorage.getItem(STORAGE.BEST_PROGRESS) || 0), 0, 100);
+}
+function setBestPct(v) {
+  const cur = getBestPct();
+  if (v > cur) localStorage.setItem(STORAGE.BEST_PROGRESS, String(v));
+}
+function resetTries() {
+  setTriesLeft(MAX_TRIES);
 }
 
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%}
-body{
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  background: radial-gradient(circle at 50% 0%, rgba(255,215,0,.08), transparent 45%),
-              linear-gradient(180deg,var(--bg1),var(--bg2));
-  overflow:hidden;
-  color:var(--white);
+// =========================
+// Game constants
+// =========================
+const lanes = [-3.2, 0, 3.2];
+const LEVEL_LENGTH = 220;           // “metros” del nivel
+const START_Z = 10;                 // inicio cercano a cámara
+const FINISH_Z = -LEVEL_LENGTH;     // meta
+
+// =========================
+// Three.js core
+// =========================
+let scene, camera, renderer, clock;
+let running = false;
+let finished = false;
+let crashed = false;
+
+const state = {
+  lane: 0,
+  laneX: 0,
+  speed: 18,     // velocidad constante (podés ajustar)
+  z: START_Z,    // avance del jugador: baja hacia negativo
+};
+
+let sled;
+let finishGate;
+
+// Obstáculos colocados a mano (prediseñados)
+const obstacles = [];
+// Each: { type: "tree"|"snowman"|"rock", lane: -1|0|1, z: -number, mesh }
+const LEVEL_LAYOUT = buildLevelLayout();
+
+// Ground
+let ground1, ground2;
+let snowPoints;
+
+// =========================
+// Boot
+// =========================
+startPreloader().then(() => {
+  init3D();
+  initUI();
+  animate();
+  hidePreloader();
+  syncHud();
+});
+
+function syncHud() {
+  el.triesText.textContent = String(getTriesLeft());
+  el.bestText.textContent = `${Math.floor(getBestPct())}%`;
+
+  const tries = getTriesLeft();
+  if (tries <= 0) {
+    el.playBtn.disabled = true;
+    el.playBtn.style.opacity = "0.6";
+    el.triesWarn.style.display = "block";
+  } else {
+    el.playBtn.disabled = false;
+    el.playBtn.style.opacity = "1";
+    el.triesWarn.style.display = "none";
+  }
 }
 
-/* Preloader */
-.preloader{
-  position:fixed; inset:0;
-  display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  gap:14px;
-  z-index:9999;
-  background: linear-gradient(180deg, rgba(6,26,36,1), rgba(11,44,59,1));
-  padding: 24px;
-}
-.preloader .logo{
-  width: min(220px, 60vw);
-  filter: drop-shadow(0 12px 30px rgba(0,0,0,.55));
-}
-.barWrap{width:min(420px, 80vw); text-align:center}
-.barBg{
-  width:100%; height:14px; border-radius:999px;
-  background: rgba(0,0,0,.35);
-  border:1px solid rgba(255,255,255,.14);
-  overflow:hidden;
-  box-shadow: inset 0 2px 12px rgba(0,0,0,.45);
-}
-.barFill{
-  width:0%; height:100%;
-  background: linear-gradient(90deg, #c5a028, #ffd700, #c5a028);
-  background-size: 200% 100%;
-  animation: shimmer 1.2s linear infinite;
-}
-@keyframes shimmer{0%{background-position:200% 50%}100%{background-position:0% 50%}}
-.barText{
-  margin-top:10px;
-  font-weight:900;
-  letter-spacing:2px;
-  color: var(--gold);
-  text-shadow: 0 0 18px rgba(255,215,0,.35);
-}
-.tip{opacity:.8;font-size:.95rem}
-
-/* HUD */
-.hudTop{
-  position:fixed;
-  top:14px; left:14px; right:14px;
-  display:flex;
-  align-items:center;
-  gap:10px;
-  z-index:60;
-  pointer-events:none;
-  flex-wrap:wrap;
-}
-.pill{
-  pointer-events:none;
-  padding:10px 12px;
-  background: rgba(0,0,0,.26);
-  border:1px solid var(--stroke);
-  border-radius: 999px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.28);
-  backdrop-filter: blur(10px);
-}
-.pill.subtle{opacity:.9}
-
-.soundBtn{
-  pointer-events:auto;
-  margin-left:auto;
-  width:48px;height:48px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.18);
-  background: rgba(0,0,0,.26);
-  color:#fff;
-  font-size:1.25rem;
-  cursor:pointer;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 14px 34px rgba(0,0,0,.35);
-}
-.soundBtn:active{transform:scale(.98)}
-.soundBtn.muted{opacity:.7}
-
-/* Mobile arrows */
-.arrows{
-  position:fixed;
-  left:0; right:0; bottom:18px;
-  display:flex;
-  justify-content:space-between;
-  padding: 0 18px;
-  z-index:55;
-  pointer-events:none;
-}
-.arrowBtn{
-  pointer-events:auto;
-  width:64px;height:64px;
-  border-radius:16px;
-  border:1px solid rgba(255,255,255,.18);
-  background: rgba(0,0,0,.25);
-  color:#fff;
-  font-weight:900;
-  font-size:1.6rem;
-  box-shadow: 0 14px 34px rgba(0,0,0,.35);
-  backdrop-filter: blur(10px);
-  cursor:pointer;
-}
-.arrowBtn:active{transform:scale(.98)}
-
-/* Hide arrows on desktop-ish */
-@media (min-width: 900px){
-  .arrows{display:none}
+async function startPreloader() {
+  let p = 0;
+  return new Promise((resolve) => {
+    const it = setInterval(() => {
+      p += Math.random() * 18 + 8;
+      if (p >= 100) {
+        p = 100;
+        clearInterval(it);
+        resolve();
+      }
+      el.barFill.style.width = `${p}%`;
+      el.barText.textContent = `${Math.floor(p)}%`;
+    }, 140);
+  });
 }
 
-/* Overlays */
-.overlay{
-  position:fixed; inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:20px;
-  z-index:100;
-  background: rgba(0,0,0,.62);
-  backdrop-filter: blur(12px);
-}
-.overlay.hidden{display:none}
-
-.card{
-  width:min(520px, 92vw);
-  background: var(--card);
-  border:1px solid var(--stroke);
-  border-radius: 18px;
-  box-shadow: var(--shadow);
-  padding: 18px 18px 16px;
-  position:relative;
-  overflow:hidden;
-}
-.card h1{font-size:2rem}
-.card h2{font-size:1.6rem}
-.sub{margin-top:8px; opacity:.86; line-height:1.35}
-
-.ctaRow{display:flex; gap:12px; margin-top: 14px;}
-button.primary, button.secondary{
-  flex:1;
-  padding:12px 14px;
-  border-radius: 14px;
-  border:1px solid rgba(255,255,255,.16);
-  cursor:pointer;
-  font-weight:900;
-  letter-spacing:.3px;
-}
-button.primary{
-  background: linear-gradient(135deg, #c5a028, #ffd700);
-  color:#1b1b1b;
-  border-color: rgba(255,255,255,.25);
-}
-button.secondary{background: rgba(255,255,255,.08); color:#fff;}
-button.primary:active, button.secondary:active{transform:scale(.99)}
-
-.fine{
-  margin-top: 12px;
-  opacity:.78;
-  font-size:.92rem;
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-.warn{
-  margin-top: 12px;
-  padding:10px 12px;
-  border-radius:14px;
-  background: rgba(255,215,0,.10);
-  border: 1px solid rgba(255,215,0,.25);
-  color: rgba(255,215,0,.95);
-}
-.list{
-  margin-top: 10px;
-  margin-left: 18px;
-  opacity:.9;
-  line-height:1.5;
+function hidePreloader() {
+  el.preloader.style.transition = "opacity .5s ease, visibility .5s ease";
+  el.preloader.style.opacity = "0";
+  el.preloader.style.visibility = "hidden";
+  el.preloader.style.pointerEvents = "none";
 }
 
-/* Prize shine (no rectángulos feos) */
-.card.prize{
-  border-color: rgba(255,215,0,.35);
+// =========================
+// UI
+// =========================
+function initUI() {
+  el.playBtn.addEventListener("click", () => {
+    if (getTriesLeft() <= 0) {
+      // ya no hay intentos: mostrar consuelo directo
+      showResult(false, true);
+      return;
+    }
+    startRun();
+  });
+
+  el.howBtn.addEventListener("click", () => {
+    el.startOverlay.classList.add("hidden");
+    el.howOverlay.classList.remove("hidden");
+  });
+
+  el.backBtn.addEventListener("click", () => {
+    el.howOverlay.classList.add("hidden");
+    el.startOverlay.classList.remove("hidden");
+  });
+
+  el.retryBtn.addEventListener("click", () => {
+    if (getTriesLeft() <= 0) {
+      showResult(false, true);
+      return;
+    }
+    startRun();
+  });
+
+  el.menuBtn.addEventListener("click", () => {
+    showMenu();
+  });
+
+  el.closeBtn.addEventListener("click", () => {
+    el.resultOverlay.classList.add("hidden");
+  });
+
+  el.claimBtn.addEventListener("click", () => {
+    // Podés redirigir a WhatsApp / link
+    // window.location.href = "https://wa.me/XXXXXXXXXX?text=Gané%20el%20bono...";
+    el.resultOverlay.classList.add("hidden");
+    showMenu();
+  });
+
+  // Mobile arrows
+  el.leftBtn.addEventListener("pointerdown", () => { if (running) setLane(state.lane - 1); });
+  el.rightBtn.addEventListener("pointerdown", () => { if (running) setLane(state.lane + 1); });
+
+  // Keyboard
+  window.addEventListener("keydown", (e) => {
+    if (!running) return;
+    if (e.key === "ArrowLeft") setLane(state.lane - 1);
+    if (e.key === "ArrowRight") setLane(state.lane + 1);
+  });
+
+  // Swipe
+  setupTouchControls();
+
+  // Tap to start (nice on mobile)
+  window.addEventListener("pointerdown", () => {
+    if (!running && !finished && !crashed && !el.startOverlay.classList.contains("hidden")) return;
+  }, { passive: true });
 }
-.card.prize .shine{
-  position:absolute;
-  inset:-70%;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255,215,0,.22), rgba(255,215,0,0) 55%),
-    conic-gradient(
-      from 0deg,
-      rgba(255,215,0,0) 0deg,
-      rgba(255,215,0,.20) 18deg,
-      rgba(255,215,0,0) 40deg,
-      rgba(255,255,255,.10) 60deg,
-      rgba(255,215,0,0) 82deg
-    );
-  filter: blur(10px);
-  animation: spin 2.8s linear infinite;
-  pointer-events:none;
-  opacity:.85;
+
+function showMenu() {
+  el.failOverlay.classList.add("hidden");
+  el.resultOverlay.classList.add("hidden");
+  el.howOverlay.classList.add("hidden");
+  el.startOverlay.classList.remove("hidden");
+  syncHud();
 }
-@keyframes spin{to{transform:rotate(360deg)}}
+
+function showFail() {
+  el.triesLeftText.textContent = String(getTriesLeft());
+  el.failOverlay.classList.remove("hidden");
+}
+
+function showResult(won, outOfTries = false) {
+  el.failOverlay.classList.add("hidden");
+  el.startOverlay.classList.add("hidden");
+
+  if (won) {
+    el.resultTitle.textContent = "🏁 ¡Llegaste a la meta!";
+    el.resultText.textContent = PRIZE_WIN;
+    localStorage.setItem(STORAGE.RESULT, "200");
+  } else {
+    el.resultTitle.textContent = outOfTries ? "🎁 Premio consuelo" : "🎁 Resultado";
+    el.resultText.textContent = PRIZE_LOSE;
+    localStorage.setItem(STORAGE.RESULT, "100");
+  }
+
+  el.resultOverlay.classList.remove("hidden");
+  syncHud();
+}
+
+// =========================
+// Touch controls (swipe)
+// =========================
+function setupTouchControls() {
+  let startX = 0, startY = 0, tracking = false;
+
+  window.addEventListener("touchstart", (e) => {
+    if (!running) return;
+    const t = e.touches && e.touches[0];
+    if (!t) return;
+    tracking = true;
+    startX = t.clientX;
+    startY = t.clientY;
+  }, { passive: true });
+
+  window.addEventListener("touchend", (e) => {
+    if (!running || !tracking) return;
+    tracking = false;
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+
+    if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx > 0) setLane(state.lane + 1);
+      else setLane(state.lane - 1);
+    }
+  }, { passive: true });
+}
+
+function setLane(l) {
+  state.lane = clamp(l, -1, 1);
+}
+
+// =========================
+// 3D init
+// =========================
+function init3D() {
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x061a24, 18, 120);
+
+  camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 260);
+  camera.position.set(0, 6.6, 12.5);
+  camera.lookAt(0, 2.2, -10);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x061a24);
+  document.body.appendChild(renderer.domElement);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x0b2c3b, 0.95);
+  scene.add(hemi);
+
+  const dir = new THREE.DirectionalLight(0xffffff, 1.15);
+  dir.position.set(8, 14, 8);
+  scene.add(dir);
+
+  // Ground tiles (scroll illusion)
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0xeaf7ff, roughness: 0.92 });
+  const groundGeo = new THREE.PlaneGeometry(22, 90);
+
+  ground1 = new THREE.Mesh(groundGeo, groundMat);
+  ground1.rotation.x = -Math.PI / 2;
+  ground1.position.z = -30;
+  scene.add(ground1);
+
+  ground2 = new THREE.Mesh(groundGeo, groundMat);
+  ground2.rotation.x = -Math.PI / 2;
+  ground2.position.z = -120;
+  scene.add(ground2);
+
+  // Lane separators (subtle)
+  const lineMat = new THREE.MeshStandardMaterial({ color: 0xcfefff, transparent: true, opacity: 0.20 });
+  const lineGeo = new THREE.BoxGeometry(0.06, 0.02, 140);
+  [-1.6, 1.6].forEach((x) => {
+    const ln = new THREE.Mesh(lineGeo, lineMat);
+    ln.position.set(x, 0.02, -80);
+    scene.add(ln);
+  });
+
+  // Sled - “look” parecido (colores tipo 4 tablones)
+  sled = buildSledLike();
+  sled.position.set(0, 0.34, 6);
+  scene.add(sled);
+
+  // Finish gate
+  finishGate = buildFinishGate();
+  finishGate.position.set(0, 0, FINISH_Z);
+  scene.add(finishGate);
+
+  // Obstacles from layout
+  for (const item of LEVEL_LAYOUT) {
+    const m = buildObstacleMesh(item.type);
+    m.position.set(lanes[item.lane + 1], 0, item.z);
+    m.userData.type = item.type;
+    m.userData.radius = item.type === "tree" ? 1.0 : item.type === "snowman" ? 0.85 : 0.9;
+    scene.add(m);
+    obstacles.push({ ...item, mesh: m });
+  }
+
+  // snow particles
+  snowPoints = addSnowParticles();
+
+  clock = new THREE.Clock();
+  window.addEventListener("resize", onResize);
+}
+
+function buildSledLike() {
+  const group = new THREE.Group();
+
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x1f1f1f, roughness: 0.55 });
+  const plankMats = [
+    new THREE.MeshStandardMaterial({ color: 0x2d6cdf, roughness: 0.55 }), // blue
+    new THREE.MeshStandardMaterial({ color: 0xe6c54a, roughness: 0.55 }), // yellow
+    new THREE.MeshStandardMaterial({ color: 0xc6453b, roughness: 0.55 }), // red
+    new THREE.MeshStandardMaterial({ color: 0x2f9b4b, roughness: 0.55 }), // green
+  ];
+
+  // rails
+  const railGeo = new THREE.BoxGeometry(0.22, 0.18, 2.6);
+  const railL = new THREE.Mesh(railGeo, railMat);
+  railL.position.set(-1.15, 0.10, 0);
+  const railR = new THREE.Mesh(railGeo, railMat);
+  railR.position.set( 1.15, 0.10, 0);
+  group.add(railL, railR);
+
+  // 4 planks
+  const plankGeo = new THREE.BoxGeometry(0.48, 0.12, 2.2);
+  const xs = [-0.72, -0.24, 0.24, 0.72];
+  xs.forEach((x, i) => {
+    const p = new THREE.Mesh(plankGeo, plankMats[i]);
+    p.position.set(x, 0.22, 0.05);
+    group.add(p);
+
+    // “tornillitos”
+    const screwMat = new THREE.MeshStandardMaterial({ color: 0x9fb2bd, roughness: 0.9 });
+    const screwGeo = new THREE.BoxGeometry(0.10, 0.05, 0.14);
+    const s1 = new THREE.Mesh(screwGeo, screwMat);
+    s1.position.set(x, 0.30, -0.55);
+    const s2 = new THREE.Mesh(screwGeo, screwMat);
+    s2.position.set(x, 0.30, 0.65);
+    group.add(s1, s2);
+  });
+
+  // handle bar
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x202020, roughness: 0.45 });
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.09, 12, 28), handleMat);
+  handle.rotation.x = Math.PI / 2;
+  handle.position.set(0, 0.55, 1.00);
+  group.add(handle);
+
+  return group;
+}
+
+function buildFinishGate() {
+  const g = new THREE.Group();
+
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.7 });
+  const bannerMat = new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.45, emissive: 0x221a00, emissiveIntensity: 0.7 });
+
+  const postGeo = new THREE.BoxGeometry(0.25, 3.2, 0.25);
+  const left = new THREE.Mesh(postGeo, postMat);
+  left.position.set(-4.3, 1.6, 0);
+  const right = new THREE.Mesh(postGeo, postMat);
+  right.position.set(4.3, 1.6, 0);
+
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.55, 0.2), bannerMat);
+  banner.position.set(0, 3.0, 0);
+
+  g.add(left, right, banner);
+
+  // small flags
+  const flagMat = new THREE.MeshStandardMaterial({ color: 0xc41e3a, roughness: 0.55 });
+  const flagGeo = new THREE.BoxGeometry(0.15, 0.9, 0.15);
+  for (let i = -4; i <= 4; i += 2) {
+    const f = new THREE.Mesh(flagGeo, flagMat);
+    f.position.set(i, 3.7, 0);
+    g.add(f);
+  }
+  return g;
+}
+
+function addSnowParticles() {
+  const geo = new THREE.BufferGeometry();
+  const count = 700;
+  const positions = new Float32Array(count * 3);
+
+  for (let i = 0; i < count; i++) {
+    positions[i * 3 + 0] = (Math.random() - 0.5) * 26;
+    positions[i * 3 + 1] = Math.random() * 12 + 2;
+    positions[i * 3 + 2] = -Math.random() * (LEVEL_LENGTH + 140);
+  }
+
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0.7 });
+  const pts = new THREE.Points(geo, mat);
+  scene.add(pts);
+  return pts;
+}
+
+// =========================
+// Level layout builder (prediseñado)
+// =========================
+function buildLevelLayout() {
+  // Diseñamos una pista con “zonas” y patrones simples
+  // z va hacia negativo (más lejos = más negativo)
+  const items = [];
+
+  const add = (type, lane, z) => items.push({ type, lane, z });
+
+  // Zona 1 (arranque) - fácil
+  add("tree", -1, -25);
+  add("snowman",  1, -35);
+  add("rock",     0, -45);
+
+  // Zona 2 - zigzag
+  add("tree", -1, -60);
+  add("tree",  1, -70);
+  add("snowman", -1, -80);
+  add("snowman",  1, -90);
+
+  // Zona 3 - doble presión
+  add("rock", -1, -105);
+  add("rock",  1, -105);
+  add("tree",  0, -120);
+
+  // Zona 4 - patrón tipo “slalom”
+  const slalomZ = [-135,-145,-155,-165,-175];
+  const slalomLane = [-1,0,1,0,-1];
+  for (let i=0;i<slalomZ.length;i++){
+    add("snowman", slalomLane[i], slalomZ[i]);
+  }
+
+  // Zona 5 - final
+  add("tree",  1, -190);
+  add("rock",  0, -200);
+  add("tree", -1, -208);
+
+  return items;
+}
+
+function buildObstacleMesh(type) {
+  if (type === "tree") return buildTree();
+  if (type === "snowman") return buildSnowman();
+  return buildRock();
+}
+
+function buildTree() {
+  const g = new THREE.Group();
+
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5b3a1e, roughness: 0.85 });
+  const leafMat  = new THREE.MeshStandardMaterial({ color: 0x2c7d4a, roughness: 0.75 });
+
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.2, 8), trunkMat);
+  trunk.position.y = 0.6;
+
+  const cone1 = new THREE.Mesh(new THREE.ConeGeometry(0.95, 1.4, 10), leafMat);
+  cone1.position.y = 1.55;
+  const cone2 = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.2, 10), leafMat);
+  cone2.position.y = 2.05;
+
+  g.add(trunk, cone1, cone2);
+  g.position.y = 0;
+  return g;
+}
+
+function buildSnowman() {
+  const g = new THREE.Group();
+  const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf1fbff, roughness: 0.9 });
+  const coalMat  = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 });
+  const noseMat  = new THREE.MeshStandardMaterial({ color: 0xff8a2a, roughness: 0.7 });
+
+  const b1 = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12), whiteMat);
+  b1.position.y = 0.55;
+  const b2 = new THREE.Mesh(new THREE.SphereGeometry(0.40, 12, 12), whiteMat);
+  b2.position.y = 1.25;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.30, 12, 12), whiteMat);
+  head.position.y = 1.78;
+
+  const eye1 = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), coalMat);
+  eye1.position.set(-0.09, 1.84, 0.22);
+  const eye2 = eye1.clone();
+  eye2.position.x = 0.09;
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.28, 10), noseMat);
+  nose.position.set(0, 1.78, 0.30);
+  nose.rotation.x = Math.PI / 2;
+
+  g.add(b1, b2, head, eye1, eye2, nose);
+  return g;
+}
+
+function buildRock() {
+  const geo = new THREE.DodecahedronGeometry(0.95, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8aa0aa, roughness: 0.95 });
+  return new THREE.Mesh(geo, mat);
+}
+
+// =========================
+// Run control
+// =========================
+function resetRun() {
+  running = false;
+  finished = false;
+  crashed = false;
+
+  state.lane = 0;
+  state.laneX = 0;
+  state.z = START_Z;
+
+  sled.position.set(0, 0.34, 6);
+  sled.rotation.set(0, 0, 0);
+
+  // obstacles stay fixed; no need reset
+  updateProgressHud();
+}
+
+function startRun() {
+  el.startOverlay.classList.add("hidden");
+  el.howOverlay.classList.add("hidden");
+  el.failOverlay.classList.add("hidden");
+  el.resultOverlay.classList.add("hidden");
+
+  resetRun();
+  running = true;
+}
+
+function crash() {
+  if (!running) return;
+  running = false;
+  crashed = true;
+
+  // spend a try
+  const t = getTriesLeft();
+  const next = Math.max(0, t - 1);
+  setTriesLeft(next);
+  syncHud();
+
+  if (next <= 0) {
+    // out of tries -> show consuelo
+    showResult(false, true);
+  } else {
+    showFail();
+  }
+}
+
+function win() {
+  if (!running) return;
+  running = false;
+  finished = true;
+
+  // reward: 200%
+  showResult(true, false);
+
+  // (opcional) si querés resetear intentos al ganar:
+  // resetTries(); syncHud();
+}
+
+// =========================
+// Loop
+// =========================
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  // camera follow lane a bit
+  camera.position.x = lerp(camera.position.x, state.laneX * 0.20, 0.06);
+
+  // snow particles drift
+  if (snowPoints) {
+    const pos = snowPoints.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.array[i * 3 + 2] += dt * 7.5; // falling effect
+      if (pos.array[i * 3 + 2] > 12) pos.array[i * 3 + 2] = -LEVEL_LENGTH - 140;
+    }
+    pos.needsUpdate = true;
+  }
+
+  if (running) updateGame(dt);
+  renderer.render(scene, camera);
+}
+
+function updateGame(dt) {
+  // lane smoothing
+  const targetX = lanes[state.lane + 1];
+  state.laneX = lerp(state.laneX, targetX, 0.16);
+
+  sled.position.x = state.laneX;
+  sled.rotation.z = lerp(sled.rotation.z, -state.lane * 0.09, 0.12);
+
+  // advance along Z (player goes “into the level”)
+  state.z -= state.speed * dt;
+
+  // scroll ground illusion
+  const vz = state.speed * dt;
+  ground1.position.z += vz;
+  ground2.position.z += vz;
+  if (ground1.position.z > 40) ground1.position.z = -120;
+  if (ground2.position.z > 40) ground2.position.z = -120;
+
+  // progress
+  updateProgressHud();
+
+  // collision check
+  for (const o of obstacles) {
+    // obstacles at o.z fixed in world
+    const ox = o.mesh.position.x;
+    const oz = o.mesh.position.z;
+
+    // player “current world z” is state.z but camera is fixed; easiest trick:
+    // we compare relative distance by shifting player reference onto level:
+    const playerZ = state.z; // level coordinate
+    const dz = oz - playerZ;
+
+    // only check near player
+    if (dz > -8 && dz < 8) {
+      const dx = ox - sled.position.x;
+      const r = o.mesh.userData.radius || 0.9;
+      if ((dx*dx + dz*dz) <= (r + 0.85) * (r + 0.85)) {
+        crash();
+        return;
+      }
+    }
+  }
+
+  // finish check: when player passes finish z
+  if (state.z <= FINISH_Z + 2) {
+    win();
+  }
+}
+
+function updateProgressHud() {
+  const traveled = START_Z - state.z; // how much we advanced
+  const pct = clamp((traveled / (START_Z - FINISH_Z)) * 100, 0, 100);
+  el.progressText.textContent = `${Math.floor(pct)}%`;
+
+  setBestPct(Math.floor(pct));
+  el.bestText.textContent = `${Math.floor(getBestPct())}%`;
+}
+
+// =========================
+// Resize
+// =========================
+function onResize() {
+  if (!renderer || !camera) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
